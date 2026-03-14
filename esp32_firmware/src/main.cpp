@@ -33,6 +33,7 @@ bool buttonPressed = false;
 unsigned long lastButtonCheck = 0;
 unsigned long stateEnteredAt = 0;
 bool audioEndReceived = false;
+unsigned long thinkingTimeoutAt = 0;  // When the timeout message was first shown
 
 // Mic capture buffer (reused each loop iteration)
 uint8_t micBuffer[AUDIO_CHUNK_BYTES];
@@ -50,6 +51,7 @@ void setState(AssistantState newState) {
     Serial.printf("[State] %d → %d\n", currentState, newState);
     currentState = newState;
     stateEnteredAt = millis();
+    if (newState == STATE_THINKING) thinkingTimeoutAt = 0;
     display.showState(currentState);
 }
 
@@ -249,6 +251,7 @@ void startListening() {
         audio.stopSpeaker();
         wsClient.sendControl("cancel");
     }
+    audioEndReceived = false;
     setState(STATE_LISTENING);
     wsClient.sendControl("start_listening");
 }
@@ -365,13 +368,17 @@ void loop() {
             break;
 
         case STATE_THINKING:
-            display.showState(STATE_THINKING);
-            // Timeout after 30 seconds
+            // Timeout after 30 seconds — non-blocking: show message then wait 1.5s before reset
             if (millis() - stateEnteredAt > 30000) {
-                Serial.println("[Main] Thinking timeout!");
-                display.showMessage("Timeout", "Try again");
-                delay(1500);
-                setState(STATE_IDLE);
+                if (thinkingTimeoutAt == 0) {
+                    Serial.println("[Main] Thinking timeout!");
+                    display.showMessage("Timeout", "Try again");
+                    thinkingTimeoutAt = millis();
+                } else if (millis() - thinkingTimeoutAt > 1500) {
+                    setState(STATE_IDLE);
+                }
+            } else {
+                display.showState(STATE_THINKING);
             }
             break;
 

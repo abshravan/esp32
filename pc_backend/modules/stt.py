@@ -4,8 +4,8 @@ Speech-to-Text module using Faster-Whisper.
 Accumulates raw PCM audio chunks, then transcribes on demand.
 Uses CTranslate2 for fast inference — works on CPU or GPU.
 """
-import io
 import time
+from typing import List
 import numpy as np
 from faster_whisper import WhisperModel
 import config
@@ -23,7 +23,7 @@ class SpeechToText:
         print("[STT] Model loaded successfully")
 
         # Buffer to accumulate audio chunks during listening
-        self._audio_chunks: list[bytes] = []
+        self._audio_chunks: List[bytes] = []
 
     def add_audio_chunk(self, chunk: bytes):
         """Add a raw PCM audio chunk (16kHz, 16-bit, mono)."""
@@ -55,6 +55,10 @@ class SpeechToText:
             # Less than 0.3 seconds of audio — skip
             print("[STT] Audio too short, skipping")
             return ""
+
+        # Ensure byte count is even — np.frombuffer with int16 requires 2-byte alignment
+        if len(raw_audio) % 2 != 0:
+            raw_audio = raw_audio[:-1]
 
         # Convert to float32 numpy array (Whisper expects float32 in [-1, 1])
         audio_np = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0

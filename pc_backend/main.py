@@ -70,7 +70,11 @@ class VoiceSession:
     def handle_audio_data(self, data: bytes):
         """Handle binary audio data from the ESP32 microphone."""
         if self.is_listening:
-            self.stt.add_audio_chunk(data)
+            # Cap at 60 seconds to prevent unbounded memory growth
+            if self.stt.get_buffer_duration() < 60.0:
+                self.stt.add_audio_chunk(data)
+            else:
+                print("[Session] Max audio buffer (60s) reached, dropping chunk")
 
     async def process_utterance(self):
         """
@@ -100,7 +104,16 @@ class VoiceSession:
         # ── Step 2: LLM Response ────────────────────────
         print("[Pipeline] Step 2: Getting LLM response...")
         llm_start = time.time()
-        response_text = self.llm.chat(text)
+        try:
+            # Run blocking LLM call in a thread to avoid blocking the event loop
+            response_text = await asyncio.wait_for(
+                asyncio.to_thread(self.llm.chat, text),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            print("[Pipeline] LLM timed out after 30s")
+            await self.send_json("error", text="Response took too long. Please try again.")
+            return
         llm_elapsed = time.time() - llm_start
         print(f"[Pipeline] LLM took {llm_elapsed:.2f}s")
 
@@ -164,10 +177,15 @@ async def websocket_endpoint(ws: WebSocket):
                     await session.handle_text_message(data)
                 except json.JSONDecodeError:
                     print(f"[Server] Invalid JSON: {message['text'][:100]}")
+                except Exception as e:
+                    print(f"[Server] Error handling text message: {e}")
 
             elif "bytes" in message:
                 # Binary audio data
-                session.handle_audio_data(message["bytes"])
+                try:
+                    session.handle_audio_data(message["bytes"])
+                except Exception as e:
+                    print(f"[Server] Error handling audio data: {e}")
 
     except WebSocketDisconnect:
         print(f"[Server] ESP32 disconnected ({client_host})")

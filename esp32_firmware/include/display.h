@@ -152,7 +152,6 @@ private:
     }
 
     void drawSpinner(int x, int y) {
-        int angles[] = {0, 90, 180, 270};
         for (int i = 0; i < 4; i++) {
             int bright = ((i + animFrame) % 4 == 0) ? 1 : 0;
             int dx = (i == 0) ? 6 : (i == 2) ? -6 : 0;

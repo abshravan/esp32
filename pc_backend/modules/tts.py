@@ -7,11 +7,11 @@ we resample to 16000Hz to match the ESP32 speaker configuration.
 If Piper is not installed, falls back to a simpler approach using
 the piper-tts Python package.
 """
-import io
 import time
 import struct
 import subprocess
 import shutil
+from typing import Optional
 import numpy as np
 from pathlib import Path
 import config
@@ -52,7 +52,7 @@ class TextToSpeech:
 
         print("[TTS] Initialized")
 
-    def _find_piper_binary(self) -> str | None:
+    def _find_piper_binary(self) -> Optional[str]:
         """Look for the piper binary in common locations."""
         # Check models dir first (downloaded alongside models)
         local_piper = config.MODELS_DIR / "piper" / "piper"
@@ -99,9 +99,6 @@ class TextToSpeech:
         """Synthesize using piper-tts Python package."""
         from piper import PiperVoice
 
-        # Piper outputs to a WAV-like stream
-        audio_stream = io.BytesIO()
-
         # Use synthesize_stream_raw for raw PCM
         raw_samples = []
         for audio_chunk in self._piper_voice.synthesize_stream_raw(text):
@@ -121,12 +118,16 @@ class TextToSpeech:
             "--speaker", str(config.PIPER_SPEAKER_ID),
         ]
 
-        proc = subprocess.run(
-            cmd,
-            input=text.encode("utf-8"),
-            capture_output=True,
-            timeout=30,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=text.encode("utf-8"),
+                capture_output=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            print("[TTS] Piper synthesis timed out after 30s")
+            return b""
 
         if proc.returncode != 0:
             print(f"[TTS] Piper error: {proc.stderr.decode()}")
