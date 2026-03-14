@@ -11,6 +11,7 @@ import time
 import struct
 import subprocess
 import shutil
+import urllib.request
 from typing import Optional
 import numpy as np
 from pathlib import Path
@@ -23,16 +24,11 @@ class TextToSpeech:
         self._model_path = Path(config.PIPER_MODEL_PATH)
 
         if not self._model_path.exists():
-            print(f"[TTS] WARNING: Piper model not found at {self._model_path}")
-            print("[TTS] Download instructions:")
-            print("  mkdir -p models && cd models")
-            print("  wget https://huggingface.co/rhasspy/piper-voices/resolve/main/"
-                  "en/en_US/amy/medium/en_US-amy-medium.onnx")
-            print("  wget https://huggingface.co/rhasspy/piper-voices/resolve/main/"
-                  "en/en_US/amy/medium/en_US-amy-medium.onnx.json")
-            self._use_piper_python = True
-        else:
-            self._use_piper_python = False
+            print(f"[TTS] Model not found at {self._model_path}")
+            print("[TTS] Attempting automatic download from HuggingFace...")
+            self._download_model()
+
+        self._use_piper_python = not self._model_path.exists()
 
         if self._piper_binary:
             print(f"[TTS] Using Piper binary: {self._piper_binary}")
@@ -51,6 +47,40 @@ class TextToSpeech:
                 self._piper_voice = None
 
         print("[TTS] Initialized")
+
+    def _download_model(self):
+        """
+        Auto-download the Piper voice model (.onnx + .onnx.json) from HuggingFace.
+        Model filename must follow the pattern: {locale}-{name}-{quality}.onnx
+        e.g. en_US-amy-medium.onnx
+        """
+        stem = self._model_path.stem  # e.g. "en_US-amy-medium"
+        parts = stem.split("-")
+        if len(parts) < 3:
+            print(f"[TTS] Cannot auto-download: unrecognised model name '{stem}'")
+            print("[TTS] Expected format: <locale>-<name>-<quality>.onnx  (e.g. en_US-amy-medium.onnx)")
+            return
+
+        locale, name, quality = parts[0], parts[1], parts[2]
+        lang = locale.split("_")[0]
+        base_url = (
+            f"https://huggingface.co/rhasspy/piper-voices/resolve/main"
+            f"/{lang}/{locale}/{name}/{quality}/"
+        )
+
+        self._model_path.parent.mkdir(parents=True, exist_ok=True)
+
+        for filename in [self._model_path.name, self._model_path.name + ".json"]:
+            dest = self._model_path.parent / filename
+            if dest.exists():
+                continue
+            url = base_url + filename
+            print(f"[TTS] Downloading {filename} ...")
+            try:
+                urllib.request.urlretrieve(url, dest)
+                print(f"[TTS] Saved → {dest}")
+            except Exception as e:
+                print(f"[TTS] Download failed for {filename}: {e}")
 
     def _find_piper_binary(self) -> Optional[str]:
         """Look for the piper binary in common locations."""
