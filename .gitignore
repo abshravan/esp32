@@ -1,0 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Models (large files)
+pc_backend/models/*.onnx
+pc_backend/models/*.onnx.json
+pc_backend/models/piper/
+
+# Audio cache
+pc_backend/audio_cache/*.wav
+pc_backend/audio_cache/*.raw
+
+# PlatformIO
+esp32_firmware/.pio/
+esp32_firmware/.vscode/
+
+# Memory DB
+pc_backend/memory_db/
+
+# OS
+.DS_Store
+Thumbs.db
