@@ -7,10 +7,13 @@ we resample to 16000Hz to match the ESP32 speaker configuration.
 If Piper is not installed, falls back to a simpler approach using
 the piper-tts Python package.
 """
+import os
 import time
 import struct
 import subprocess
 import shutil
+import tempfile
+import wave
 import urllib.request
 from typing import Optional
 import numpy as np
@@ -99,6 +102,7 @@ class TextToSpeech:
     def synthesize(self, text: str) -> bytes:
         """
         Convert text to raw PCM audio (16kHz, 16-bit, mono).
+        Tries Piper first, falls back to pyttsx3 (OS built-in TTS).
         Returns bytes of PCM audio data.
         """
         if not text.strip():
@@ -107,17 +111,22 @@ class TextToSpeech:
         print(f"[TTS] Synthesizing: \"{text[:80]}{'...' if len(text)>80 else ''}\"")
         start = time.time()
 
+        pcm_data = b""
         try:
             if self._use_piper_python and self._piper_voice:
                 pcm_data = self._synthesize_python(text)
             elif self._piper_binary:
                 pcm_data = self._synthesize_binary(text)
-            else:
-                print("[TTS] No TTS engine available!")
-                return b""
         except Exception as e:
-            print(f"[TTS] Synthesis error: {e}")
-            return b""
+            print(f"[TTS] Piper error: {e}")
+
+        if not pcm_data:
+            print("[TTS] Piper unavailable, falling back to pyttsx3 (OS TTS)")
+            try:
+                pcm_data = self._synthesize_pyttsx3(text)
+            except Exception as e:
+                print(f"[TTS] pyttsx3 fallback error: {e}")
+                return b""
 
         elapsed = time.time() - start
         duration = len(pcm_data) / (config.SAMPLE_RATE * config.SAMPLE_WIDTH)
@@ -165,6 +174,37 @@ class TextToSpeech:
 
         raw_audio = proc.stdout
         return self._resample(raw_audio, config.PIPER_SAMPLE_RATE, config.SAMPLE_RATE)
+
+    def _synthesize_pyttsx3(self, text: str) -> bytes:
+        """
+        Fallback TTS using the OS built-in speech engine via pyttsx3.
+        No model downloads needed — works on Windows (SAPI5), macOS, Linux.
+        """
+        import pyttsx3
+
+        engine = pyttsx3.init()
+        engine.setProperty("rate", 160)
+
+        tmp_path = tempfile.mktemp(suffix=".wav")
+        try:
+            engine.save_to_file(text, tmp_path)
+            engine.runAndWait()
+            engine.stop()
+
+            with wave.open(tmp_path, "rb") as wf:
+                raw = wf.readframes(wf.getnframes())
+                src_rate = wf.getframerate()
+                n_channels = wf.getnchannels()
+
+            # Mix stereo → mono if needed
+            if n_channels == 2:
+                samples = np.frombuffer(raw, dtype=np.int16).reshape(-1, 2)
+                raw = samples.mean(axis=1).astype(np.int16).tobytes()
+
+            return self._resample(raw, src_rate, config.SAMPLE_RATE)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     def _resample(self, pcm_data: bytes, src_rate: int, dst_rate: int) -> bytes:
         """
