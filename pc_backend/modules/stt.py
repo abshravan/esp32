@@ -59,29 +59,48 @@ class SpeechToText:
         # Convert to float32 numpy array (Whisper expects float32 in [-1, 1])
         audio_np = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0
 
-        print(f"[STT] Transcribing {len(audio_np)/config.SAMPLE_RATE:.1f}s of audio...")
+        rms = float(np.sqrt(np.mean(audio_np ** 2)))
+        duration = len(audio_np) / config.SAMPLE_RATE
+        print(f"[STT] Transcribing {duration:.1f}s of audio (RMS level: {rms:.4f})...")
+
+        if rms < 0.001:
+            print("[STT] Audio level extremely low — check microphone gain or wiring")
+
         start = time.time()
 
-        segments, info = self.model.transcribe(
+        def _collect_segments(segments) -> str:
+            return " ".join(s.text.strip() for s in segments).strip()
+
+        # First attempt: with VAD filter to remove silence
+        segments, _ = self.model.transcribe(
             audio_np,
             language="en",
-            beam_size=3,            # Lower = faster, higher = more accurate
+            beam_size=3,
             best_of=1,
-            temperature=0.0,        # Greedy decoding for speed
+            temperature=0.0,
             condition_on_previous_text=False,
-            vad_filter=True,         # Filter out silence
+            vad_filter=True,
             vad_parameters=dict(
                 min_silence_duration_ms=300,
                 speech_pad_ms=200,
             ),
         )
+        text = _collect_segments(segments)
 
-        # Collect all segment texts
-        text_parts = []
-        for segment in segments:
-            text_parts.append(segment.text.strip())
+        # Fallback: VAD may have stripped quiet-but-valid speech — retry without it
+        if not text:
+            print("[STT] VAD filtered all audio, retrying without VAD...")
+            segments, _ = self.model.transcribe(
+                audio_np,
+                language="en",
+                beam_size=3,
+                best_of=1,
+                temperature=0.0,
+                condition_on_previous_text=False,
+                vad_filter=False,
+            )
+            text = _collect_segments(segments)
 
-        text = " ".join(text_parts).strip()
         elapsed = time.time() - start
         print(f"[STT] Result ({elapsed:.2f}s): \"{text}\"")
 
