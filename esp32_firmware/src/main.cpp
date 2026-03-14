@@ -153,17 +153,19 @@ bool readButton() {
 void handleButton() {
     bool pressed = readButton();
 
+    // Tap-to-talk: act only on press (rising edge), ignore release.
+    // First tap → start listening. Second tap → stop and process.
     if (pressed && !buttonPressed) {
-        // Button just pressed
         buttonPressed = true;
-        Serial.println("[Button] PRESSED → Start listening");
-        startListening();
-    }
-    else if (!pressed && buttonPressed) {
-        // Button just released
-        buttonPressed = false;
-        Serial.println("[Button] RELEASED → Stop listening");
-        stopListening();
+        if (currentState == STATE_LISTENING) {
+            Serial.println("[Button] TAP → Stop listening");
+            stopListening();
+        } else if (currentState == STATE_IDLE || currentState == STATE_SPEAKING) {
+            Serial.println("[Button] TAP → Start listening");
+            startListening();
+        }
+    } else if (!pressed && buttonPressed) {
+        buttonPressed = false;  // Track release for next edge detection only
     }
 }
 
@@ -257,7 +259,7 @@ void setup() {
     Serial.println("║  s + Enter  →  Start listening (record)  ║");
     Serial.println("║  e + Enter  →  Stop listening (process)  ║");
     Serial.println("║  c + Enter  →  Cancel / interrupt         ║");
-    Serial.println("║  BOOT btn   →  Hold=record, release=send ║");
+    Serial.println("║  BOOT btn   →  Tap=start, tap again=send ║");
     Serial.println("╚══════════════════════════════════════════╝");
     Serial.println();
 }
@@ -385,6 +387,11 @@ void loop() {
         case STATE_LISTENING:
             captureAndStreamAudio();
             display.showState(STATE_LISTENING);
+            // Auto-stop after MAX_LISTEN_SECONDS to prevent runaway recording
+            if (millis() - stateEnteredAt > MAX_LISTEN_SECONDS * 1000UL) {
+                Serial.printf("[Main] Max listen time (%ds) reached, auto-stopping\n", MAX_LISTEN_SECONDS);
+                stopListening();
+            }
             break;
 
         case STATE_THINKING:
