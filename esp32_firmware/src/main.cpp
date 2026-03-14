@@ -51,7 +51,17 @@ void setState(AssistantState newState) {
     Serial.printf("[State] %d → %d\n", currentState, newState);
     currentState = newState;
     stateEnteredAt = millis();
+
     if (newState == STATE_THINKING) thinkingTimeoutAt = 0;
+
+    // Mute mic while speaker is active to prevent echo feedback.
+    // Flush DMA buffers on unmute so captured speaker audio is discarded.
+    if (newState == STATE_SPEAKING) {
+        audio.muteMicrophone();
+    } else if (newState == STATE_LISTENING) {
+        audio.unmuteMicrophone();
+    }
+
     display.showState(currentState);
 }
 

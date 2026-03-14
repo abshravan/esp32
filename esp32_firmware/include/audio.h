@@ -190,6 +190,18 @@ public:
         playbackBuffer.clear();
     }
 
+    // Silence the microphone DMA during playback to prevent echo feedback.
+    void muteMicrophone() {
+        i2s_stop(MIC_I2S_PORT);
+    }
+
+    // Re-enable the microphone and flush DMA buffers so any audio captured
+    // while the speaker was playing does not get transcribed.
+    void unmuteMicrophone() {
+        i2s_start(MIC_I2S_PORT);
+        i2s_zero_dma_buffer(MIC_I2S_PORT);
+    }
+
     void setMicGain(int gainPercent) {
         micGain = gainPercent;
     }
