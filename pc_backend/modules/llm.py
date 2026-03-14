@@ -4,10 +4,25 @@ LLM interaction module using Google Gemini 2.0 Flash.
 Maintains conversation history for multi-turn context.
 Supports both streaming and non-streaming responses.
 """
+import re
 import time
 from typing import List
 import google.generativeai as genai
 import config
+
+
+def _rate_limit_message(err: Exception) -> str:
+    """Return a user-friendly spoken message for a 429 rate-limit error."""
+    match = re.search(r'retry in (\d+(?:\.\d+)?)s', str(err))
+    if match:
+        seconds = int(float(match.group(1))) + 1
+        return f"I've hit the API rate limit. Please wait {seconds} seconds and try again."
+    return "I've hit the API rate limit. Please wait a moment and try again."
+
+
+def _is_rate_limit(err: Exception) -> bool:
+    s = str(err)
+    return '429' in s or 'quota' in s.lower() or 'ResourceExhausted' in type(err).__name__
 
 
 class LLMChat:
@@ -50,8 +65,12 @@ class LLMChat:
             response = chat_session.send_message(user_text)
             reply = response.text.strip()
         except Exception as e:
-            print(f"[LLM] Error: {e}")
-            reply = "Sorry, I had trouble thinking about that. Could you try again?"
+            if _is_rate_limit(e):
+                print(f"[LLM] Rate limit (429): {e}")
+                reply = _rate_limit_message(e)
+            else:
+                print(f"[LLM] Error: {e}")
+                reply = "Sorry, I had trouble thinking about that. Could you try again?"
             success = False
 
         elapsed = time.time() - start
@@ -87,9 +106,13 @@ class LLMChat:
                     full_reply += chunk.text
                     yield chunk.text
         except Exception as e:
-            print(f"[LLM] Stream error: {e}")
             stream_success = False
-            yield "Sorry, something went wrong."
+            if _is_rate_limit(e):
+                print(f"[LLM] Rate limit (429): {e}")
+                yield _rate_limit_message(e)
+            else:
+                print(f"[LLM] Stream error: {e}")
+                yield "Sorry, something went wrong."
 
         elapsed = time.time() - start
         print(f"[LLM] Stream done ({elapsed:.2f}s): \"{full_reply[:100]}...\"")
