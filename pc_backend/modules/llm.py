@@ -5,6 +5,7 @@ Maintains conversation history for multi-turn context.
 Supports both streaming and non-streaming responses.
 """
 import time
+from typing import List
 import google.generativeai as genai
 import config
 
@@ -29,7 +30,7 @@ class LLMChat:
         )
 
         # Conversation history: list of {"role": "user"/"model", "parts": ["text"]}
-        self._history: list[dict] = []
+        self._history: List[dict] = []
 
         print(f"[LLM] Initialized with model: {config.GEMINI_MODEL}")
 
@@ -44,24 +45,25 @@ class LLMChat:
         # Build chat with history
         chat_session = self.model.start_chat(history=self._history)
 
+        success = True
         try:
             response = chat_session.send_message(user_text)
             reply = response.text.strip()
         except Exception as e:
             print(f"[LLM] Error: {e}")
             reply = "Sorry, I had trouble thinking about that. Could you try again?"
+            success = False
 
         elapsed = time.time() - start
         print(f"[LLM] Response ({elapsed:.2f}s): \"{reply[:100]}{'...' if len(reply)>100 else ''}\"")
 
-        # Update history
-        self._history.append({"role": "user", "parts": [user_text]})
-        self._history.append({"role": "model", "parts": [reply]})
-
-        # Trim old history to save context window
-        while len(self._history) > config.MAX_CONVERSATION_TURNS * 2:
-            self._history.pop(0)
-            self._history.pop(0)
+        # Only update history on success — don't pollute context with error fallbacks
+        if success:
+            self._history.append({"role": "user", "parts": [user_text]})
+            self._history.append({"role": "model", "parts": [reply]})
+            while len(self._history) > config.MAX_CONVERSATION_TURNS * 2:
+                self._history.pop(0)
+                self._history.pop(0)
 
         return reply
 
@@ -77,6 +79,7 @@ class LLMChat:
         chat_session = self.model.start_chat(history=self._history)
 
         full_reply = ""
+        stream_success = True
         try:
             response = chat_session.send_message(user_text, stream=True)
             for chunk in response:
@@ -85,20 +88,19 @@ class LLMChat:
                     yield chunk.text
         except Exception as e:
             print(f"[LLM] Stream error: {e}")
-            error_msg = "Sorry, something went wrong."
-            full_reply = error_msg
-            yield error_msg
+            stream_success = False
+            yield "Sorry, something went wrong."
 
         elapsed = time.time() - start
         print(f"[LLM] Stream done ({elapsed:.2f}s): \"{full_reply[:100]}...\"")
 
-        # Update history with full response
-        self._history.append({"role": "user", "parts": [user_text]})
-        self._history.append({"role": "model", "parts": [full_reply]})
-
-        while len(self._history) > config.MAX_CONVERSATION_TURNS * 2:
-            self._history.pop(0)
-            self._history.pop(0)
+        # Only update history on success — don't pollute context with error fallbacks
+        if stream_success and full_reply:
+            self._history.append({"role": "user", "parts": [user_text]})
+            self._history.append({"role": "model", "parts": [full_reply]})
+            while len(self._history) > config.MAX_CONVERSATION_TURNS * 2:
+                self._history.pop(0)
+                self._history.pop(0)
 
     def clear_history(self):
         """Reset conversation memory."""
