@@ -1,11 +1,14 @@
 """
-LLM interaction module using Google Gemini 2.0 Flash.
+LLM interaction module — primary: Google Gemini, fallback: Ollama (local).
 
-Maintains conversation history for multi-turn context.
-Supports both streaming and non-streaming responses.
+When Gemini hits its quota limit the module automatically retries with
+a local Ollama model if Ollama is running on the same machine.
+Install Ollama → https://ollama.com  then run: ollama pull llama3.2
 """
 import re
 import time
+import urllib.request
+import json
 from typing import List
 import google.generativeai as genai
 import config
@@ -23,6 +26,31 @@ def _rate_limit_message(err: Exception) -> str:
 def _is_rate_limit(err: Exception) -> bool:
     s = str(err)
     return '429' in s or 'quota' in s.lower() or 'ResourceExhausted' in type(err).__name__
+
+
+def _ollama_chat(history: List[dict], user_text: str, model: str = "llama3.2") -> str:
+    """
+    Send a message to a local Ollama server (http://localhost:11434).
+    Returns the reply text, or raises an exception if Ollama is not running.
+    """
+    messages = []
+    if config.SYSTEM_PROMPT:
+        messages.append({"role": "system", "content": config.SYSTEM_PROMPT})
+    for turn in history:
+        role = "assistant" if turn["role"] == "model" else "user"
+        messages.append({"role": role, "content": turn["parts"][0]})
+    messages.append({"role": "user", "content": user_text})
+
+    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
+    req = urllib.request.Request(
+        "http://localhost:11434/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    return data["message"]["content"].strip()
 
 
 class LLMChat:
@@ -66,12 +94,19 @@ class LLMChat:
             reply = response.text.strip()
         except Exception as e:
             if _is_rate_limit(e):
-                print(f"[LLM] Rate limit (429): {e}")
-                reply = _rate_limit_message(e)
+                print(f"[LLM] Gemini rate limit (429) — trying Ollama fallback...")
+                try:
+                    reply = _ollama_chat(self._history, user_text)
+                    print(f"[LLM] Ollama fallback succeeded")
+                except Exception as ollama_err:
+                    print(f"[LLM] Ollama not available: {ollama_err}")
+                    print("[LLM] Install Ollama → https://ollama.com  then: ollama pull llama3.2")
+                    reply = _rate_limit_message(e)
+                    success = False
             else:
                 print(f"[LLM] Error: {e}")
                 reply = "Sorry, I had trouble thinking about that. Could you try again?"
-            success = False
+                success = False
 
         elapsed = time.time() - start
         print(f"[LLM] Response ({elapsed:.2f}s): \"{reply[:100]}{'...' if len(reply)>100 else ''}\"")
