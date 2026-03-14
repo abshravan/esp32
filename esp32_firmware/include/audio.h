@@ -62,6 +62,10 @@ public:
     RingBuffer playbackBuffer;
 
     bool beginMicrophone() {
+        // INMP441 channel selection:
+        //   L/R pin tied LOW  (GND) → mic outputs LEFT channel  → use I2S_CHANNEL_FMT_ONLY_LEFT
+        //   L/R pin tied HIGH (3V3) → mic outputs RIGHT channel → use I2S_CHANNEL_FMT_ONLY_RIGHT
+        // If you get silence, flip this to I2S_CHANNEL_FMT_ONLY_RIGHT.
         i2s_config_t mic_config = {
             .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
             .sample_rate = SAMPLE_RATE,
@@ -190,8 +194,10 @@ public:
         micGain = gainPercent;
     }
 
+    int getMicGain() const { return micGain; }
+
 private:
-    int micGain = 200;  // Default 2x amplification for INMP441
+    int micGain = 400;  // 4x amplification — INMP441 outputs low amplitude in 16-bit mode
 };
 
 #endif // AUDIO_H

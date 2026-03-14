@@ -173,6 +173,26 @@ void handleButton() {
 void captureAndStreamAudio() {
     size_t bytesRead = audio.readMicrophone(micBuffer, AUDIO_CHUNK_BYTES);
     if (bytesRead > 0) {
+        // Track peak amplitude and log every ~1.6s (50 chunks × 32ms each)
+        // so you can verify the mic is producing signal in the serial monitor.
+        static uint32_t chunkCount = 0;
+        static int16_t peakAmplitude = 0;
+
+        int16_t* samples = (int16_t*)micBuffer;
+        size_t numSamples = bytesRead / 2;
+        for (size_t i = 0; i < numSamples; i++) {
+            int16_t s = samples[i] < 0 ? -samples[i] : samples[i];
+            if (s > peakAmplitude) peakAmplitude = s;
+        }
+
+        if (++chunkCount % 50 == 0) {
+            Serial.printf("[Mic] Peak amplitude: %d (gain=%d)\n", peakAmplitude, audio.getMicGain());
+            if (peakAmplitude < 50) {
+                Serial.println("[Mic] WARNING: near-zero signal — check wiring or try ONLY_RIGHT channel in audio.h");
+            }
+            peakAmplitude = 0;
+        }
+
         wsClient.sendAudio(micBuffer, bytesRead);
     }
 }
