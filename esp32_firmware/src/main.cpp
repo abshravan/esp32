@@ -158,8 +158,13 @@ void handleButton() {
     if (pressed && !buttonPressed) {
         buttonPressed = true;
         if (currentState == STATE_LISTENING) {
-            Serial.println("[Button] TAP → Stop listening");
-            stopListening();
+            // Guard: ignore tap if we just started listening (catches button bounce)
+            if (millis() - stateEnteredAt > MIN_LISTEN_MS) {
+                Serial.println("[Button] TAP → Stop listening");
+                stopListening();
+            } else {
+                Serial.println("[Button] TAP ignored — too soon after start (bounce?)");
+            }
         } else if (currentState == STATE_IDLE || currentState == STATE_SPEAKING) {
             Serial.println("[Button] TAP → Start listening");
             startListening();

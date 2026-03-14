@@ -43,7 +43,8 @@
 // Push-to-Talk Button
 // ============================================================
 #define BTN_PIN         0     // BOOT button on most ESP32 boards
-#define BTN_DEBOUNCE_MS 50
+#define BTN_DEBOUNCE_MS 100   // Increased from 50ms — BOOT button bounces heavily
+#define MIN_LISTEN_MS   500   // Ignore stop-tap within 500ms of starting (prevents bounce)
 
 // ============================================================
 // Audio Configuration
