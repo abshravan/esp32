@@ -41,7 +41,7 @@ public:
             case STATE_IDLE:
                 drawCenteredText("Ready", 28);
                 drawMicIcon(56, 18, false);
-                drawCenteredText("Press button to talk", 52);
+                drawCenteredText("Tap button to talk", 52);
                 break;
 
             case STATE_CONNECTING:

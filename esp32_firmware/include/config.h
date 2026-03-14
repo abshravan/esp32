@@ -62,6 +62,13 @@
 #define PLAYBACK_BUF_SIZE    (SAMPLE_RATE * 2 * (BITS_PER_SAMPLE / 8))
 
 // ============================================================
+// Listening Behaviour
+// ============================================================
+// Maximum recording duration before auto-stop (seconds).
+// Increase this if you need to speak for longer.
+#define MAX_LISTEN_SECONDS   60
+
+// ============================================================
 // State Machine
 // ============================================================
 enum AssistantState {
