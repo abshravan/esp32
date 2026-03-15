@@ -16,6 +16,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <FastLED.h>
 #include "config.h"
 #include "audio.h"
 #include "ws_client.h"
@@ -27,6 +28,8 @@
 Audio audio;
 WSClient wsClient;
 Display display;
+
+CRGB leds[LED_COUNT];
 
 AssistantState currentState = STATE_IDLE;
 bool buttonPressed = false;
@@ -139,6 +142,14 @@ void onWsText(const char* type, const char* data) {
         Serial.printf("[Main] Server error: %s\n", data);
         display.showMessage("Error:", data);
         errorUntil = millis() + 2000;  // Replaced delay(2000)+setState — main loop handles transition
+    } else if (strcmp(type, "led") == 0) {
+        // data is "r,g,b" encoded as a comma-separated string in the text field
+        int r = 0, g = 0, b = 0;
+        if (sscanf(data, "%d,%d,%d", &r, &g, &b) == 3) {
+            for (int i = 0; i < LED_COUNT; i++) leds[i] = CRGB(r, g, b);
+            FastLED.show();
+            Serial.printf("[LED] Set to rgb(%d, %d, %d)\n", r, g, b);
+        }
     }
 }
 
@@ -264,6 +275,11 @@ void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println("\n\n=== ESP32 Voice Assistant ===\n");
+
+    // WS2812B LED
+    FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
+    FastLED.setBrightness(180);
+    FastLED.clear(true);  // Start with LEDs off
 
     // Button
     pinMode(BTN_PIN, INPUT_PULLUP);

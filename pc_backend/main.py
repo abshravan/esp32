@@ -24,6 +24,7 @@ import config
 from modules.stt import get_stt
 from modules.llm import get_llm
 from modules.tts import get_tts
+from modules.led import parse_led_command
 
 app = FastAPI(title="ESP32 Voice Assistant Backend")
 
@@ -128,7 +129,17 @@ class VoiceSession:
             print("[Pipeline] Cancelled after LLM")
             return
 
-        await self.send_json("response", text=response_text)
+        # ── LED command extraction ───────────────────────
+        # Strip [LED:color] tag from the response before TTS; send it to
+        # the ESP32 so the WS2812B updates instantly while TTS is synthesising.
+        tts_text, rgb = parse_led_command(response_text)
+        if rgb is not None:
+            r, g, b = rgb
+            print(f"[Pipeline] LED command → rgb({r}, {g}, {b})")
+            # Encode as "r,g,b" in the text field — ws_client.h only forwards doc["text"]
+            await self.send_json("led", text=f"{r},{g},{b}")
+
+        await self.send_json("response", text=tts_text)
 
         # ── Step 3: Text to Speech ──────────────────────
         print("[Pipeline] Step 3: Synthesizing speech...")
@@ -138,7 +149,7 @@ class VoiceSession:
 
         # pyttsx3 synthesis runs in a thread (see tts.py for why a fresh engine
         # is created each call — reuse deadlocks on Linux).
-        pcm_data = await asyncio.to_thread(self.tts.synthesize, response_text)
+        pcm_data = await asyncio.to_thread(self.tts.synthesize, tts_text)
         if not pcm_data:
             print("[Pipeline] TTS returned no audio")
             if not stale():
