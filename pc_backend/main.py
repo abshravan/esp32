@@ -129,18 +129,30 @@ class VoiceSession:
         await self.send_json("speaking")
 
         tts_start = time.time()
-        chunks_sent = 0
 
-        for audio_chunk in self.tts.synthesize_chunks(response_text):
+        # Run blocking pyttsx3 synthesis in a thread so the event loop stays
+        # free to receive cancel/audio messages while TTS renders.
+        pcm_data = await asyncio.to_thread(self.tts.synthesize, response_text)
+        if not pcm_data:
+            print("[Pipeline] TTS returned no audio")
+            await self.send_json("error", text="Sorry, I couldn't generate a spoken reply.")
+            return
+
+        chunks_sent = 0
+        offset = 0
+        chunk_size = config.AUDIO_STREAM_CHUNK
+
+        while offset < len(pcm_data):
             if self.is_cancelled:
                 print("[Pipeline] Cancelled during TTS streaming")
                 break
 
-            await self.ws.send_bytes(audio_chunk)
+            end = min(offset + chunk_size, len(pcm_data))
+            await self.ws.send_bytes(pcm_data[offset:end])
             chunks_sent += 1
+            offset = end
 
             # Small yield to keep the event loop responsive
-            # and allow receiving cancel messages
             if chunks_sent % 10 == 0:
                 await asyncio.sleep(0.001)
 
