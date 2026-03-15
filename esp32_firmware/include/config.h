@@ -40,6 +40,12 @@
 #define OLED_ADDR       0x3C
 
 // ============================================================
+// WS2812B LED Strip
+// ============================================================
+#define LED_PIN         4     // Data pin (GPIO 4)
+#define LED_COUNT       1     // Number of LEDs in the strip
+
+// ============================================================
 // Push-to-Talk Button
 // ============================================================
 #define BTN_PIN         0     // BOOT button on most ESP32 boards

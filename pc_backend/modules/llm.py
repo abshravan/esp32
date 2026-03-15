@@ -35,6 +35,12 @@ class LLMChat:
             weather = get_weather().get_summary()
             if weather:
                 system += f"\n{weather}"
+            system += (
+                "\nIf the user asks you to change, set, or control a light or LED color, "
+                "append [LED:colorname] at the very end of your response. "
+                "Supported colors: red, green, blue, white, yellow, orange, purple, pink, cyan, warm white, off. "
+                "Example: \"Turning the light blue. [LED:blue]\""
+            )
             messages.append({"role": "system", "content": system})
         messages.extend(self._history)
         messages.append({"role": "user", "content": user_text})
