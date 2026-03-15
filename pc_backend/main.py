@@ -45,6 +45,11 @@ class VoiceSession:
         # captures the value at call time; if it changes, the pipeline is stale
         # and aborts at the next checkpoint — no flag-reset race possible.
         self._session_id = 0
+        # Serialises all outgoing WebSocket writes (text + bytes).
+        # Without this, the pipeline task's send_bytes() calls can race against
+        # the websockets library's automatic PONG responses to ESP32 PING frames,
+        # causing an AssertionError in _drain_helper and crashing the connection.
+        self._ws_lock = asyncio.Lock()
 
     def new_session(self):
         """Start a fresh listen/process cycle, invalidating any running pipeline."""
@@ -54,8 +59,9 @@ class VoiceSession:
 
     async def send_json(self, msg_type: str, **kwargs):
         """Send a JSON message to the ESP32."""
-        data = {"type": msg_type, **kwargs}
-        await self.ws.send_text(json.dumps(data))
+        payload = json.dumps({"type": msg_type, **kwargs})
+        async with self._ws_lock:
+            await self.ws.send_text(payload)
 
     def handle_audio_data(self, data: bytes):
         """Handle binary audio data from the ESP32 microphone."""
@@ -149,7 +155,8 @@ class VoiceSession:
                 break
 
             end = min(offset + chunk_size, len(pcm_data))
-            await self.ws.send_bytes(pcm_data[offset:end])
+            async with self._ws_lock:
+                await self.ws.send_bytes(pcm_data[offset:end])
             chunks_sent += 1
             offset = end
 
@@ -248,7 +255,7 @@ async def websocket_endpoint(ws: WebSocket):
             pipeline_task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(pipeline_task), timeout=2.0)
-            except Exception:
+            except BaseException:
                 pass
         print(f"[Server] Session ended ({client_host})")
 
@@ -303,7 +310,8 @@ def main():
         host=config.WS_HOST,
         port=config.WS_PORT,
         log_level="warning",
-        ws_ping_interval=20,
+        ws="wsproto",         # wsproto serialises PONG frames through the same
+        ws_ping_interval=20,  # write path as app data — no concurrent-drain race
         ws_ping_timeout=20,
     )
 
