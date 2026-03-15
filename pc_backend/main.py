@@ -4,8 +4,8 @@ ESP32 Voice Assistant — PC Backend Server
 WebSocket server that orchestrates the full voice pipeline:
   1. Receives raw PCM audio from ESP32
   2. Transcribes speech with Faster-Whisper
-  3. Gets a response from Google Gemini
-  4. Converts response to speech with Piper TTS
+  3. Gets a response from Ollama (local LLM)
+  4. Converts response to speech with pyttsx3
   5. Streams audio back to ESP32
 
 Run:
@@ -199,8 +199,9 @@ async def health_check():
     return {
         "status": "ok",
         "stt_model": config.STT_MODEL_SIZE,
-        "llm_model": config.GEMINI_MODEL,
-        "tts_model": str(config.PIPER_MODEL_PATH),
+        "llm_model": config.OLLAMA_MODEL,
+        "llm_url": config.OLLAMA_URL,
+        "tts_engine": "pyttsx3",
     }
 
 
@@ -210,15 +211,10 @@ def main():
     print("=" * 60)
     print(f"  WebSocket:  ws://{config.WS_HOST}:{config.WS_PORT}/ws")
     print(f"  STT Model:  {config.STT_MODEL_SIZE} ({config.STT_DEVICE})")
-    print(f"  LLM Model:  {config.GEMINI_MODEL}")
-    print(f"  TTS Model:  {config.PIPER_MODEL_PATH}")
+    print(f"  LLM:        {config.OLLAMA_MODEL} via {config.OLLAMA_URL}")
+    print(f"  TTS:        pyttsx3 (OS built-in)")
     print(f"  Audio:      {config.SAMPLE_RATE}Hz, {config.SAMPLE_WIDTH*8}-bit, mono")
     print("=" * 60)
-
-    if not config.GEMINI_API_KEY:
-        print("\n⚠ WARNING: GEMINI_API_KEY not set!")
-        print("  Export it:  export GEMINI_API_KEY='your-key'")
-        print("  Or create:  .env file with GEMINI_API_KEY=your-key\n")
 
     # Pre-load models at startup (so first request is fast)
     print("\n[Startup] Pre-loading models...")

@@ -1,108 +1,28 @@
 """
-Text-to-Speech module using Piper TTS.
+Text-to-Speech module using pyttsx3 (OS built-in TTS).
 
-Piper is a fast, local neural TTS engine. It outputs 22050Hz audio which
-we resample to 16000Hz to match the ESP32 speaker configuration.
-
-If Piper is not installed, falls back to a simpler approach using
-the piper-tts Python package.
+Works on Windows (SAPI5), macOS, and Linux without model downloads or
+external binaries. Audio is resampled to 16kHz mono to match the ESP32
+speaker configuration.
 """
 import os
 import time
-import struct
-import subprocess
-import shutil
-import tempfile
 import wave
-import urllib.request
-from typing import Optional
+import tempfile
 import numpy as np
-from pathlib import Path
+import pyttsx3
 import config
 
 
 class TextToSpeech:
     def __init__(self):
-        self._piper_binary = self._find_piper_binary()
-        self._model_path = Path(config.PIPER_MODEL_PATH)
-
-        if not self._model_path.exists():
-            print(f"[TTS] Model not found at {self._model_path}")
-            print("[TTS] Attempting automatic download from HuggingFace...")
-            self._download_model()
-
-        self._use_piper_python = not self._model_path.exists()
-
-        if self._piper_binary:
-            print(f"[TTS] Using Piper binary: {self._piper_binary}")
-        else:
-            print("[TTS] Piper binary not found, using piper-tts Python package")
-            self._use_piper_python = True
-
-        if self._use_piper_python:
-            try:
-                from piper import PiperVoice
-                self._piper_voice = PiperVoice.load(str(self._model_path))
-                print("[TTS] Loaded Piper voice via Python package")
-            except Exception as e:
-                print(f"[TTS] Could not load Piper Python package: {e}")
-                print("[TTS] Will use subprocess fallback")
-                self._piper_voice = None
-
-        print("[TTS] Initialized")
-
-    def _download_model(self):
-        """
-        Auto-download the Piper voice model (.onnx + .onnx.json) from HuggingFace.
-        Model filename must follow the pattern: {locale}-{name}-{quality}.onnx
-        e.g. en_US-amy-medium.onnx
-        """
-        stem = self._model_path.stem  # e.g. "en_US-amy-medium"
-        parts = stem.split("-")
-        if len(parts) < 3:
-            print(f"[TTS] Cannot auto-download: unrecognised model name '{stem}'")
-            print("[TTS] Expected format: <locale>-<name>-<quality>.onnx  (e.g. en_US-amy-medium.onnx)")
-            return
-
-        locale, name, quality = parts[0], parts[1], parts[2]
-        lang = locale.split("_")[0]
-        base_url = (
-            f"https://huggingface.co/rhasspy/piper-voices/resolve/main"
-            f"/{lang}/{locale}/{name}/{quality}/"
-        )
-
-        self._model_path.parent.mkdir(parents=True, exist_ok=True)
-
-        for filename in [self._model_path.name, self._model_path.name + ".json"]:
-            dest = self._model_path.parent / filename
-            if dest.exists():
-                continue
-            url = base_url + filename
-            print(f"[TTS] Downloading {filename} ...")
-            try:
-                urllib.request.urlretrieve(url, dest)
-                print(f"[TTS] Saved → {dest}")
-            except Exception as e:
-                print(f"[TTS] Download failed for {filename}: {e}")
-
-    def _find_piper_binary(self) -> Optional[str]:
-        """Look for the piper binary in common locations."""
-        # Check models dir first (downloaded alongside models)
-        local_piper = config.MODELS_DIR / "piper" / "piper"
-        if local_piper.exists():
-            return str(local_piper)
-
-        # Check PATH
-        piper_path = shutil.which("piper")
-        if piper_path:
-            return piper_path
-
-        return None
+        self._engine = pyttsx3.init()
+        self._engine.setProperty("rate", 160)
+        print("[TTS] Initialized (pyttsx3)")
 
     def synthesize(self, text: str) -> bytes:
         """
         Convert text to raw PCM audio (16kHz, 16-bit, mono).
-        Tries Piper first, falls back to pyttsx3 (OS built-in TTS).
         Returns bytes of PCM audio data.
         """
         if not text.strip():
@@ -111,85 +31,10 @@ class TextToSpeech:
         print(f"[TTS] Synthesizing: \"{text[:80]}{'...' if len(text)>80 else ''}\"")
         start = time.time()
 
-        pcm_data = b""
-        try:
-            if self._use_piper_python and self._piper_voice:
-                pcm_data = self._synthesize_python(text)
-            elif self._piper_binary:
-                pcm_data = self._synthesize_binary(text)
-        except Exception as e:
-            print(f"[TTS] Piper error: {e}")
-
-        if not pcm_data:
-            print("[TTS] Piper unavailable, falling back to pyttsx3 (OS TTS)")
-            try:
-                pcm_data = self._synthesize_pyttsx3(text)
-            except Exception as e:
-                print(f"[TTS] pyttsx3 fallback error: {e}")
-                return b""
-
-        elapsed = time.time() - start
-        duration = len(pcm_data) / (config.SAMPLE_RATE * config.SAMPLE_WIDTH)
-        print(f"[TTS] Done ({elapsed:.2f}s) → {duration:.1f}s of audio")
-
-        return pcm_data
-
-    def _synthesize_python(self, text: str) -> bytes:
-        """Synthesize using piper-tts Python package."""
-        from piper import PiperVoice
-
-        # Use synthesize_stream_raw for raw PCM
-        raw_samples = []
-        for audio_chunk in self._piper_voice.synthesize_stream_raw(text):
-            raw_samples.append(audio_chunk)
-
-        raw_audio = b"".join(raw_samples)
-
-        # Piper outputs at PIPER_SAMPLE_RATE (22050), resample to 16000
-        return self._resample(raw_audio, config.PIPER_SAMPLE_RATE, config.SAMPLE_RATE)
-
-    def _synthesize_binary(self, text: str) -> bytes:
-        """Synthesize using piper command-line binary."""
-        cmd = [
-            self._piper_binary,
-            "--model", str(self._model_path),
-            "--output_raw",
-            "--speaker", str(config.PIPER_SPEAKER_ID),
-        ]
-
-        try:
-            proc = subprocess.run(
-                cmd,
-                input=text.encode("utf-8"),
-                capture_output=True,
-                timeout=30,
-            )
-        except subprocess.TimeoutExpired:
-            print("[TTS] Piper synthesis timed out after 30s")
-            return b""
-
-        if proc.returncode != 0:
-            print(f"[TTS] Piper error: {proc.stderr.decode()}")
-            return b""
-
-        raw_audio = proc.stdout
-        return self._resample(raw_audio, config.PIPER_SAMPLE_RATE, config.SAMPLE_RATE)
-
-    def _synthesize_pyttsx3(self, text: str) -> bytes:
-        """
-        Fallback TTS using the OS built-in speech engine via pyttsx3.
-        No model downloads needed — works on Windows (SAPI5), macOS, Linux.
-        """
-        import pyttsx3
-
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 160)
-
         tmp_path = tempfile.mktemp(suffix=".wav")
         try:
-            engine.save_to_file(text, tmp_path)
-            engine.runAndWait()
-            engine.stop()
+            self._engine.save_to_file(text, tmp_path)
+            self._engine.runAndWait()
 
             with wave.open(tmp_path, "rb") as wf:
                 raw = wf.readframes(wf.getnframes())
@@ -201,35 +46,30 @@ class TextToSpeech:
                 samples = np.frombuffer(raw, dtype=np.int16).reshape(-1, 2)
                 raw = samples.mean(axis=1).astype(np.int16).tobytes()
 
-            return self._resample(raw, src_rate, config.SAMPLE_RATE)
+            pcm_data = self._resample(raw, src_rate, config.SAMPLE_RATE)
+        except Exception as e:
+            print(f"[TTS] Error: {e}")
+            return b""
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
+        elapsed = time.time() - start
+        duration = len(pcm_data) / (config.SAMPLE_RATE * config.SAMPLE_WIDTH)
+        print(f"[TTS] Done ({elapsed:.2f}s) → {duration:.1f}s of audio")
+        return pcm_data
+
     def _resample(self, pcm_data: bytes, src_rate: int, dst_rate: int) -> bytes:
-        """
-        Resample PCM audio from src_rate to dst_rate.
-        Input/output: raw 16-bit signed PCM bytes.
-        Uses linear interpolation for speed.
-        """
+        """Resample 16-bit PCM from src_rate to dst_rate using linear interpolation."""
         if src_rate == dst_rate:
             return pcm_data
 
-        # Convert to numpy
         samples = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32)
-
-        # Calculate resampled length
-        duration = len(samples) / src_rate
-        new_length = int(duration * dst_rate)
-
-        # Linear interpolation resampling
+        new_length = int(len(samples) * dst_rate / src_rate)
         x_old = np.linspace(0, 1, len(samples))
         x_new = np.linspace(0, 1, new_length)
         resampled = np.interp(x_new, x_old, samples)
-
-        # Convert back to int16
-        resampled = np.clip(resampled, -32768, 32767).astype(np.int16)
-        return resampled.tobytes()
+        return np.clip(resampled, -32768, 32767).astype(np.int16).tobytes()
 
     def synthesize_chunks(self, text: str, chunk_size: int = config.AUDIO_STREAM_CHUNK):
         """
@@ -240,7 +80,6 @@ class TextToSpeech:
         if not pcm_data:
             return
 
-        # Yield in fixed-size chunks
         offset = 0
         while offset < len(pcm_data):
             end = min(offset + chunk_size, len(pcm_data))
