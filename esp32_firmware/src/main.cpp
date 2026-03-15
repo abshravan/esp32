@@ -192,7 +192,13 @@ void handleButton() {
             } else {
                 Serial.println("[Button] TAP ignored — too soon after start (bounce?)");
             }
-        } else if (currentState == STATE_IDLE || currentState == STATE_SPEAKING) {
+        } else if (currentState == STATE_SPEAKING) {
+            // During playback: just stop, don't start listening.
+            // This prevents the mic from recording speaker echo.
+            // User taps again from IDLE to start a new question.
+            Serial.println("[Button] TAP → Stop playback");
+            cancelAction();
+        } else if (currentState == STATE_IDLE) {
             Serial.println("[Button] TAP → Start listening");
             startListening();
         }
