@@ -1,11 +1,11 @@
 """
-Weather module — OpenWeatherMap current conditions.
+Weather module — wttr.in (no API key required).
 
-Free tier API key: https://openweathermap.org/api  (sign up, use "Current Weather")
-Set WEATHER_API_KEY and WEATHER_CITY in your .env file.
+wttr.in is a free, open-source weather service. No signup needed.
+Set WEATHER_CITY in your .env file (defaults to "London").
 
 Results are cached for CACHE_TTL_SECONDS so every LLM request doesn't
-hit the network.  If the API is unreachable the last good reading is
+hit the network.  If the service is unreachable the last good reading is
 returned; if there is no reading yet, None is returned and the LLM
 answers without weather context.
 """
@@ -26,20 +26,17 @@ class WeatherClient:
         self._cache_time: float = 0
 
     def _fetch(self) -> dict | None:
-        if not config.WEATHER_API_KEY or not config.WEATHER_CITY:
+        if not config.WEATHER_CITY:
             return None
 
-        params = urllib.parse.urlencode({
-            "q":     config.WEATHER_CITY,
-            "appid": config.WEATHER_API_KEY,
-            "units": config.WEATHER_UNITS,
-        })
-        url = f"https://api.openweathermap.org/data/2.5/weather?{params}"
+        city = urllib.parse.quote(config.WEATHER_CITY)
+        url = f"https://wttr.in/{city}?format=j1"
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
+            req = urllib.request.Request(url, headers={"User-Agent": "esp32-voice-assistant/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
-            print(f"[Weather] HTTP {e.code}: {e.reason} — check API key / city name")
+            print(f"[Weather] HTTP {e.code}: {e.reason} — check city name")
         except Exception as e:
             print(f"[Weather] Fetch error: {e}")
         return None
@@ -47,7 +44,7 @@ class WeatherClient:
     def get_summary(self) -> str | None:
         """
         Return a short natural-language weather summary for injection into the
-        LLM system prompt, or None if weather is not configured / unavailable.
+        LLM system prompt, or None if weather is unavailable.
 
         Example: "Partly cloudy, 24°C (75°F), humidity 60%, wind 12 km/h."
         """
@@ -62,21 +59,21 @@ class WeatherClient:
 
         d = self._cache
         try:
-            desc     = d["weather"][0]["description"].capitalize()
-            temp_c   = d["main"]["temp"]
-            temp_f   = temp_c * 9 / 5 + 32
-            humidity = d["main"]["humidity"]
-            wind_ms  = d["wind"]["speed"]
-            wind_kph = wind_ms * 3.6
-            city     = d["name"]
+            cur      = d["current_condition"][0]
+            desc     = cur["weatherDesc"][0]["value"]
+            temp_c   = cur["temp_C"]
+            temp_f   = cur["temp_F"]
+            humidity = cur["humidity"]
+            wind_kph = cur["windspeedKmph"]
+            city     = d["nearest_area"][0]["areaName"][0]["value"]
 
             return (
                 f"Current weather in {city}: {desc}, "
-                f"{temp_c:.0f}°C ({temp_f:.0f}°F), "
+                f"{temp_c}°C ({temp_f}°F), "
                 f"humidity {humidity}%, "
-                f"wind {wind_kph:.0f} km/h."
+                f"wind {wind_kph} km/h."
             )
-        except (KeyError, TypeError) as e:
+        except (KeyError, IndexError, TypeError) as e:
             print(f"[Weather] Parse error: {e}")
             return None
 
