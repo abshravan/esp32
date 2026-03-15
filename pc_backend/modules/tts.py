@@ -44,6 +44,13 @@ class TextToSpeech:
                 raw = wf.readframes(wf.getnframes())
                 src_rate = wf.getframerate()
                 n_channels = wf.getnchannels()
+                src_width = wf.getsampwidth()
+
+            if src_width != 2:
+                raise ValueError(
+                    f"pyttsx3 produced {src_width * 8}-bit audio; expected 16-bit. "
+                    "Check your OS TTS engine settings."
+                )
 
             # Mix stereo → mono if needed
             if n_channels == 2:

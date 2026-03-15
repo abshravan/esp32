@@ -36,6 +36,8 @@ bool audioEndReceived = false;
 unsigned long thinkingTimeoutAt = 0;   // Timestamp when the timeout message was shown
 bool thinkingTimedOut = false;         // Boolean guard — avoids millis()==0 sentinel ambiguity
 unsigned long playbackEndedAt = 0;     // For post-speak echo cooldown (reset each session)
+unsigned long transcriptUntil = 0;    // Show transcript display until this timestamp (non-blocking)
+unsigned long errorUntil = 0;         // Show error display until this timestamp, then go IDLE
 
 // Mic capture buffer (reused each loop iteration)
 uint8_t micBuffer[AUDIO_CHUNK_BYTES];
@@ -57,6 +59,8 @@ void setState(AssistantState newState) {
     if (newState == STATE_THINKING) {
         thinkingTimedOut = false;
         thinkingTimeoutAt = 0;
+        transcriptUntil = 0;
+        errorUntil = 0;
     }
 
     // Mute mic while speaker is active to prevent echo feedback.
@@ -120,15 +124,14 @@ void onWsText(const char* type, const char* data) {
         setState(STATE_SPEAKING);
     } else if (strcmp(type, "transcript") == 0) {
         display.showTranscript(data);
-        delay(800); // Brief display of what was heard
+        transcriptUntil = millis() + 800;  // Replaced delay(800) — main loop guards display update
     } else if (strcmp(type, "audio_end") == 0) {
         Serial.println("[Main] Audio response complete");
         audioEndReceived = true;
     } else if (strcmp(type, "error") == 0) {
         Serial.printf("[Main] Server error: %s\n", data);
         display.showMessage("Error:", data);
-        delay(2000);
-        setState(STATE_IDLE);
+        errorUntil = millis() + 2000;  // Replaced delay(2000)+setState — main loop handles transition
     }
 }
 
@@ -418,6 +421,16 @@ void loop() {
             break;
 
         case STATE_THINKING:
+            // Error recovery: keep error message on screen for 2 s then return to IDLE.
+            // errorUntil is set by onWsText so the callback never blocks.
+            if (errorUntil > 0) {
+                if (millis() > errorUntil) {
+                    errorUntil = 0;
+                    setState(STATE_IDLE);
+                }
+                break;  // Don't overwrite the error display until the timer fires
+            }
+
             // Timeout after 30 seconds — non-blocking: show message then wait 1.5s before reset.
             // Uses a boolean flag rather than a 0-sentinel so that millis() wrapping to 0
             // at 49 days cannot falsely reset the timer.
@@ -430,6 +443,8 @@ void loop() {
                 } else if (millis() - thinkingTimeoutAt > 1500) {
                     setState(STATE_IDLE);
                 }
+            } else if (millis() < transcriptUntil) {
+                // Transcript is being shown — don't overwrite with the thinking animation yet
             } else {
                 display.showState(STATE_THINKING);
             }
