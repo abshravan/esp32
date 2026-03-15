@@ -16,8 +16,15 @@ import config
 
 class TextToSpeech:
     def __init__(self):
-        self._engine = pyttsx3.init()
-        self._engine.setProperty("rate", 160)
+        # Verify pyttsx3 can initialise on this platform at startup.
+        # We do NOT keep the engine alive between calls: on Linux the espeak
+        # driver leaves internal state that causes runAndWait() to deadlock on
+        # the second invocation.  A fresh engine is created for each synthesis.
+        try:
+            engine = pyttsx3.init()
+            engine.stop()
+        except Exception as e:
+            print(f"[TTS] Warning: pyttsx3 init check failed: {e}")
         print("[TTS] Initialized (pyttsx3)")
 
     def synthesize(self, text: str) -> bytes:
@@ -31,14 +38,20 @@ class TextToSpeech:
         print(f"[TTS] Synthesizing: \"{text[:80]}{'...' if len(text)>80 else ''}\"")
         start = time.time()
 
+        # Fresh engine per call — reusing a pyttsx3 engine across calls causes
+        # runAndWait() to deadlock on the second invocation on Linux (espeak driver
+        # leaves its internal event loop in a dirty state after the first run).
+        engine = pyttsx3.init()
+        engine.setProperty("rate", 160)
+
         # mkstemp creates the file atomically (no TOCTOU race between
         # generating the path and pyttsx3 opening it).  Close the fd
         # immediately — pyttsx3 will reopen the file by path itself.
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
         os.close(tmp_fd)
         try:
-            self._engine.save_to_file(text, tmp_path)
-            self._engine.runAndWait()
+            engine.save_to_file(text, tmp_path)
+            engine.runAndWait()
 
             with wave.open(tmp_path, "rb") as wf:
                 raw = wf.readframes(wf.getnframes())
@@ -62,6 +75,10 @@ class TextToSpeech:
             print(f"[TTS] Error: {e}")
             return b""
         finally:
+            try:
+                engine.stop()  # Release the espeak driver process cleanly
+            except Exception:
+                pass
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
