@@ -136,7 +136,12 @@ void onWsText(const char* type, const char* data) {
 }
 
 void onWsBinary(const uint8_t* data, size_t len) {
-    // Audio data from server → ring buffer → speaker
+    // Audio data from server → ring buffer → speaker.
+    // Discard if not speaking: the server may still be streaming chunks after
+    // we interrupted playback (cancel races the pipeline).  Accepting them
+    // would fill the ring buffer with no reader to drain it, causing overflow.
+    if (currentState != STATE_SPEAKING) return;
+
     size_t written = audio.playbackBuffer.write(data, len);
     if (written < len) {
         Serial.printf("[Audio] Playback buffer overflow, dropped %d bytes\n", len - written);
