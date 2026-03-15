@@ -26,9 +26,9 @@ STT_DEVICE = os.getenv("STT_DEVICE", "cpu")
 STT_COMPUTE_TYPE = os.getenv("STT_COMPUTE_TYPE", "int8")
 # "int8" for CPU, "float16" for CUDA
 
-# ─── LLM (Google Gemini) ─────────────────────────────
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# ─── LLM (Ollama — local) ────────────────────────────
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", """
 You are a helpful, friendly voice assistant running on an ESP32 device.
@@ -37,18 +37,6 @@ The user is speaking to you, so respond naturally as in a spoken conversation.
 Do not use markdown, bullet points, or formatting — just plain spoken text.
 If you don't know something, say so briefly.
 """.strip())
-
-# Maximum response tokens from Gemini
-GEMINI_MAX_TOKENS = int(os.getenv("GEMINI_MAX_TOKENS", "256"))
-
-# ─── Text to Speech (Piper) ──────────────────────────
-PIPER_MODEL_PATH = os.getenv(
-    "PIPER_MODEL_PATH",
-    str(Path(__file__).parent / "models" / "en_US-amy-medium.onnx")
-)
-PIPER_SPEAKER_ID = int(os.getenv("PIPER_SPEAKER_ID", "0"))
-# Output sample rate from Piper — we resample to SAMPLE_RATE if needed
-PIPER_SAMPLE_RATE = 22050
 
 # ─── Conversation Memory ─────────────────────────────
 # Number of previous turns to keep in context
@@ -60,6 +48,5 @@ MAX_CONVERSATION_TURNS = int(os.getenv("MAX_CONVERSATION_TURNS", "10"))
 AUDIO_STREAM_CHUNK = 1024
 
 # ─── Paths ────────────────────────────────────────────
-MODELS_DIR = Path(__file__).parent / "models"
 AUDIO_CACHE_DIR = Path(__file__).parent / "audio_cache"
 AUDIO_CACHE_DIR.mkdir(exist_ok=True)
