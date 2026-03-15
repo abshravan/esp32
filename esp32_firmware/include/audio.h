@@ -172,13 +172,18 @@ public:
         return bytesRead;
     }
 
-    // Feed audio from ring buffer to speaker DMA
-    // Call this frequently from the main loop during playback
+    // Feed audio from ring buffer to speaker DMA.
+    // Feeds whatever is available — including partial final chunks — so no
+    // audio is left stranded in the ring buffer when the stream ends.
     void feedSpeaker() {
-        if (playbackBuffer.available() < AUDIO_CHUNK_BYTES) return;
+        size_t avail = playbackBuffer.available();
+        if (avail == 0) return;
 
+        // Use a full-chunk buffer but read only what's available so the
+        // last (partial) chunk of a response is not silently discarded.
         uint8_t chunk[AUDIO_CHUNK_BYTES];
-        size_t got = playbackBuffer.read(chunk, AUDIO_CHUNK_BYTES);
+        size_t toRead = avail < AUDIO_CHUNK_BYTES ? avail : AUDIO_CHUNK_BYTES;
+        size_t got = playbackBuffer.read(chunk, toRead);
         if (got > 0) {
             size_t written = 0;
             i2s_write(SPK_I2S_PORT, chunk, got, &written, pdMS_TO_TICKS(50));
@@ -189,6 +194,7 @@ public:
         }
     }
 
+    // Hard stop: silence DMA immediately (use on cancel/interrupt).
     void stopSpeaker() {
         i2s_zero_dma_buffer(SPK_I2S_PORT);
         playbackBuffer.clear();
