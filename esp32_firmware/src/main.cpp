@@ -192,15 +192,11 @@ void handleButton() {
             } else {
                 Serial.println("[Button] TAP ignored — too soon after start (bounce?)");
             }
-        } else if (currentState == STATE_SPEAKING) {
-            // During playback: just stop, don't start listening.
-            // This prevents the mic from recording speaker echo.
-            // User taps again from IDLE to start a new question.
-            Serial.println("[Button] TAP → Stop playback");
-            cancelAction();
         } else if (currentState == STATE_IDLE) {
             Serial.println("[Button] TAP → Start listening");
             startListening();
+        } else if (currentState == STATE_SPEAKING) {
+            Serial.println("[Button] TAP ignored — TTS playing, wait for IDLE");
         }
     } else if (!pressed && buttonPressed) {
         buttonPressed = false;  // Track release for next edge detection only
@@ -243,10 +239,11 @@ void captureAndStreamAudio() {
 void handlePlayback() {
     audio.feedSpeaker();
 
-    // Once the server signals audio_end AND the local buffer has drained,
-    // keep the mic muted for POST_SPEAK_SILENCE_MS so room echo dies down
-    // before we return to IDLE and allow the next recording to start.
-    if (audioEndReceived && audio.playbackBuffer.available() < AUDIO_CHUNK_BYTES) {
+    // Once the server signals audio_end AND the ring buffer is fully drained
+    // (available() == 0), wait POST_SPEAK_SILENCE_MS for room echo to die down
+    // before returning to IDLE.  We wait for 0, not < AUDIO_CHUNK_BYTES, so the
+    // last partial chunk is fed to the I2S DMA before we stop.
+    if (audioEndReceived && audio.playbackBuffer.available() == 0) {
         if (playbackEndedAt == 0) {
             Serial.println("[Main] Audio stream done, muting mic for echo cooldown...");
             acceptPlaybackAudio = false;
