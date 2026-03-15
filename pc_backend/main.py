@@ -41,31 +41,21 @@ class VoiceSession:
         self.tts = get_tts()
         self.is_listening = False
         self.is_cancelled = False
+        # Incremented on every new start_listening.  Each process_utterance()
+        # captures the value at call time; if it changes, the pipeline is stale
+        # and aborts at the next checkpoint — no flag-reset race possible.
+        self._session_id = 0
+
+    def new_session(self):
+        """Start a fresh listen/process cycle, invalidating any running pipeline."""
+        self._session_id += 1
+        self.is_cancelled = False
+        self.is_listening = True
 
     async def send_json(self, msg_type: str, **kwargs):
         """Send a JSON message to the ESP32."""
         data = {"type": msg_type, **kwargs}
         await self.ws.send_text(json.dumps(data))
-
-    async def handle_text_message(self, data: dict):
-        """Handle a JSON control message from the ESP32."""
-        msg_type = data.get("type", "")
-
-        if msg_type == "start_listening":
-            print("\n[Session] ▶ Start listening")
-            self.is_listening = True
-            self.is_cancelled = False
-            self.stt.clear_buffer()
-
-        elif msg_type == "stop_listening":
-            print("[Session] ⏹ Stop listening")
-            self.is_listening = False
-            # Process the captured audio
-            await self.process_utterance()
-
-        elif msg_type == "cancel":
-            print("[Session] ✖ Cancel requested")
-            self.is_cancelled = True
 
     def handle_audio_data(self, data: bytes):
         """Handle binary audio data from the ESP32 microphone."""
@@ -79,25 +69,33 @@ class VoiceSession:
     async def process_utterance(self):
         """
         Full pipeline: STT → LLM → TTS → Stream back to ESP32.
-        This is called after the user releases the push-to-talk button.
+        Launched as an asyncio Task so the WebSocket receive loop keeps
+        running concurrently — cancel/start messages are handled in real time.
         """
         pipeline_start = time.time()
+        my_session_id = self._session_id  # Snapshot — any change means we're stale
+
+        def stale() -> bool:
+            """True if a newer session has started or an explicit cancel arrived."""
+            return self.is_cancelled or self._session_id != my_session_id
 
         # ── Step 1: Speech to Text ──────────────────────
         print("\n[Pipeline] Step 1: Transcribing speech...")
         await self.send_json("thinking")
 
-        text = self.stt.transcribe()
+        # Run in a thread — Whisper can take 1–3 s on CPU and must not block
+        # the event loop (which would prevent receiving cancel messages).
+        text = await asyncio.to_thread(self.stt.transcribe)
 
         if not text:
             print("[Pipeline] No speech detected")
-            await self.send_json("error", text="I didn't hear anything. Try again?")
+            if not stale():
+                await self.send_json("error", text="I didn't hear anything. Try again?")
             return
 
-        # Send transcript to ESP32 for display
         await self.send_json("transcript", text=text)
 
-        if self.is_cancelled:
+        if stale():
             print("[Pipeline] Cancelled after STT")
             return
 
@@ -105,23 +103,25 @@ class VoiceSession:
         print("[Pipeline] Step 2: Getting LLM response...")
         llm_start = time.time()
         try:
-            # Run blocking LLM call in a thread to avoid blocking the event loop
             response_text = await asyncio.wait_for(
                 asyncio.to_thread(self.llm.chat, text),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
             print("[Pipeline] LLM timed out after 30s")
-            await self.send_json("error", text="Response took too long. Please try again.")
+            if not stale():
+                await self.send_json("error", text="Response took too long. Please try again.")
             return
+        except asyncio.CancelledError:
+            raise  # Propagate hard task cancellation
+
         llm_elapsed = time.time() - llm_start
         print(f"[Pipeline] LLM took {llm_elapsed:.2f}s")
 
-        if self.is_cancelled:
+        if stale():
             print("[Pipeline] Cancelled after LLM")
             return
 
-        # Send response text to ESP32
         await self.send_json("response", text=response_text)
 
         # ── Step 3: Text to Speech ──────────────────────
@@ -130,12 +130,13 @@ class VoiceSession:
 
         tts_start = time.time()
 
-        # Run blocking pyttsx3 synthesis in a thread so the event loop stays
-        # free to receive cancel/audio messages while TTS renders.
+        # pyttsx3 synthesis runs in a thread (see tts.py for why a fresh engine
+        # is created each call — reuse deadlocks on Linux).
         pcm_data = await asyncio.to_thread(self.tts.synthesize, response_text)
         if not pcm_data:
             print("[Pipeline] TTS returned no audio")
-            await self.send_json("error", text="Sorry, I couldn't generate a spoken reply.")
+            if not stale():
+                await self.send_json("error", text="Sorry, I couldn't generate a spoken reply.")
             return
 
         chunks_sent = 0
@@ -143,7 +144,7 @@ class VoiceSession:
         chunk_size = config.AUDIO_STREAM_CHUNK
 
         while offset < len(pcm_data):
-            if self.is_cancelled:
+            if stale():
                 print("[Pipeline] Cancelled during TTS streaming")
                 break
 
@@ -152,17 +153,17 @@ class VoiceSession:
             chunks_sent += 1
             offset = end
 
-            # Small yield to keep the event loop responsive
+            # Yield every 10 chunks so the event loop can process incoming frames
             if chunks_sent % 10 == 0:
-                await asyncio.sleep(0.001)
+                await asyncio.sleep(0)
 
         tts_elapsed = time.time() - tts_start
         print(f"[Pipeline] TTS streaming took {tts_elapsed:.2f}s ({chunks_sent} chunks)")
 
-        # Signal end of audio — skip if cancelled; ESP32 already returned to IDLE via
-        # its own cancelAction() and sending a stale audio_end would set audioEndReceived
-        # while the device is idle, confusing the next SPEAKING→IDLE transition.
-        if not self.is_cancelled:
+        # Signal end of audio only if this pipeline is still the active one.
+        # A stale pipeline must not send audio_end — the ESP32 may have already
+        # returned to IDLE (via cancel) and the flag would corrupt the next session.
+        if not stale():
             await self.send_json("audio_end")
 
         total = time.time() - pipeline_start
@@ -174,29 +175,56 @@ async def websocket_endpoint(ws: WebSocket):
     """
     WebSocket endpoint for ESP32 connections.
     Each connected ESP32 gets its own VoiceSession.
+
+    The pipeline (STT→LLM→TTS) runs as a concurrent asyncio Task so this
+    receive loop is never blocked.  Cancel and start_listening messages are
+    therefore handled in real time rather than queued until the pipeline ends.
     """
     await ws.accept()
     client_host = ws.client.host if ws.client else "unknown"
     print(f"\n[Server] ESP32 connected from {client_host}")
 
     session = VoiceSession(ws)
+    pipeline_task: asyncio.Task | None = None
 
     try:
         while True:
             message = await ws.receive()
 
+            # Starlette delivers close frames as a dict with type "websocket.disconnect"
+            if message.get("type") == "websocket.disconnect":
+                print(f"[Server] ESP32 disconnected ({client_host})")
+                break
+
             if "text" in message:
-                # JSON control message
                 try:
                     data = json.loads(message["text"])
-                    await session.handle_text_message(data)
+                    msg_type = data.get("type", "")
+
+                    if msg_type == "start_listening":
+                        print("\n[Session] ▶ Start listening")
+                        # new_session() increments _session_id — any running
+                        # pipeline's stale() check will return True at its next
+                        # checkpoint and exit without sending further messages.
+                        session.new_session()
+                        session.stt.clear_buffer()
+
+                    elif msg_type == "stop_listening":
+                        print("[Session] ⏹ Stop listening")
+                        session.is_listening = False
+                        # Launch pipeline concurrently; receive loop keeps running
+                        pipeline_task = asyncio.create_task(session.process_utterance())
+
+                    elif msg_type == "cancel":
+                        print("[Session] ✖ Cancel requested")
+                        session.is_cancelled = True
+
                 except json.JSONDecodeError:
                     print(f"[Server] Invalid JSON: {message['text'][:100]}")
                 except Exception as e:
                     print(f"[Server] Error handling text message: {e}")
 
             elif "bytes" in message:
-                # Binary audio data
                 try:
                     session.handle_audio_data(message["bytes"])
                 except Exception as e:
@@ -204,8 +232,25 @@ async def websocket_endpoint(ws: WebSocket):
 
     except WebSocketDisconnect:
         print(f"[Server] ESP32 disconnected ({client_host})")
+    except RuntimeError as e:
+        # Starlette raises RuntimeError("Cannot call 'receive' once a disconnect
+        # message has been received") if the loop iterates after a close frame.
+        if "disconnect" in str(e).lower():
+            print(f"[Server] ESP32 disconnected ({client_host})")
+        else:
+            print(f"[Server] Runtime error: {e}")
     except Exception as e:
         print(f"[Server] Error: {e}")
+    finally:
+        # Signal and clean up any in-flight pipeline
+        session.is_cancelled = True
+        if pipeline_task and not pipeline_task.done():
+            pipeline_task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(pipeline_task), timeout=2.0)
+            except Exception:
+                pass
+        print(f"[Server] Session ended ({client_host})")
 
 
 @app.get("/health")
