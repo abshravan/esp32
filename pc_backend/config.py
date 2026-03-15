@@ -47,6 +47,13 @@ MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "80"))
 # Number of previous turns to keep in context
 MAX_CONVERSATION_TURNS = int(os.getenv("MAX_CONVERSATION_TURNS", "10"))
 
+# ─── Weather (OpenWeatherMap free tier) ──────────────
+# Sign up at https://openweathermap.org/api → "Current Weather Data" (free)
+# Leave WEATHER_API_KEY empty to disable weather context entirely.
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
+WEATHER_CITY    = os.getenv("WEATHER_CITY", "London")
+WEATHER_UNITS   = os.getenv("WEATHER_UNITS", "metric")   # metric | imperial
+
 # ─── Audio Streaming ─────────────────────────────────
 # Chunk size for streaming TTS audio back to ESP32
 # 1024 bytes = 512 samples = 32ms at 16kHz

@@ -6,8 +6,10 @@ Install Ollama → https://ollama.com  then run: ollama pull llama3.2
 import time
 import json
 import urllib.request
+from datetime import datetime
 from typing import List
 import config
+from modules.weather import get_weather
 
 
 class LLMChat:
@@ -28,7 +30,12 @@ class LLMChat:
     def _build_messages(self, user_text: str) -> List[dict]:
         messages = []
         if config.SYSTEM_PROMPT:
-            messages.append({"role": "system", "content": config.SYSTEM_PROMPT})
+            now = datetime.now().strftime("%A, %B %d %Y, %I:%M %p")
+            system = f"{config.SYSTEM_PROMPT}\nCurrent date and time: {now}."
+            weather = get_weather().get_summary()
+            if weather:
+                system += f"\n{weather}"
+            messages.append({"role": "system", "content": system})
         messages.extend(self._history)
         messages.append({"role": "user", "content": user_text})
         return messages
