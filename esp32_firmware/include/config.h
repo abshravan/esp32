@@ -69,6 +69,12 @@
 // Increase this if you need to speak for longer.
 #define MAX_LISTEN_SECONDS   60
 
+// How long to keep the microphone muted after the speaker
+// finishes playing, so room echo has time to die down before
+// the next recording starts.  500ms works well in most rooms;
+// increase if the assistant still triggers on its own voice.
+#define POST_SPEAK_SILENCE_MS  500
+
 // ============================================================
 // State Machine
 // ============================================================

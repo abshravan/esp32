@@ -220,11 +220,21 @@ void captureAndStreamAudio() {
 void handlePlayback() {
     audio.feedSpeaker();
 
-    // Check if playback is complete
+    // Once the server signals audio_end AND the local buffer has drained,
+    // keep the mic muted for POST_SPEAK_SILENCE_MS so room echo dies down
+    // before we return to IDLE and allow the next recording to start.
     if (audioEndReceived && audio.playbackBuffer.available() < AUDIO_CHUNK_BYTES) {
-        Serial.println("[Main] Playback finished");
-        audio.stopSpeaker();
-        setState(STATE_IDLE);
+        static unsigned long playbackEndedAt = 0;
+
+        if (playbackEndedAt == 0) {
+            Serial.println("[Main] Audio stream done, muting mic for echo cooldown...");
+            audio.stopSpeaker();
+            playbackEndedAt = millis();
+        } else if (millis() - playbackEndedAt > POST_SPEAK_SILENCE_MS) {
+            Serial.println("[Main] Echo cooldown complete, returning to IDLE");
+            playbackEndedAt = 0;
+            setState(STATE_IDLE);
+        }
     }
 }
 
