@@ -56,9 +56,11 @@ class SpeechToText:
             print("[STT] Audio too short, skipping")
             return ""
 
-        # Ensure byte count is even — np.frombuffer with int16 requires 2-byte alignment
+        # np.frombuffer with int16 requires 2-byte alignment.  Pad with a
+        # silent byte rather than dropping the last byte so no real audio
+        # data is lost (one zero byte = half a silent sample at the end).
         if len(raw_audio) % 2 != 0:
-            raw_audio = raw_audio[:-1]
+            raw_audio = raw_audio + b"\x00"
 
         # Convert to float32 numpy array (Whisper expects float32 in [-1, 1])
         audio_np = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0

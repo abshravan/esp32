@@ -33,8 +33,9 @@ bool buttonPressed = false;
 unsigned long lastButtonCheck = 0;
 unsigned long stateEnteredAt = 0;
 bool audioEndReceived = false;
-unsigned long thinkingTimeoutAt = 0;  // When the timeout message was first shown
-unsigned long playbackEndedAt = 0;    // For post-speak echo cooldown (reset each session)
+unsigned long thinkingTimeoutAt = 0;   // Timestamp when the timeout message was shown
+bool thinkingTimedOut = false;         // Boolean guard — avoids millis()==0 sentinel ambiguity
+unsigned long playbackEndedAt = 0;     // For post-speak echo cooldown (reset each session)
 
 // Mic capture buffer (reused each loop iteration)
 uint8_t micBuffer[AUDIO_CHUNK_BYTES];
@@ -53,7 +54,10 @@ void setState(AssistantState newState) {
     currentState = newState;
     stateEnteredAt = millis();
 
-    if (newState == STATE_THINKING) thinkingTimeoutAt = 0;
+    if (newState == STATE_THINKING) {
+        thinkingTimedOut = false;
+        thinkingTimeoutAt = 0;
+    }
 
     // Mute mic while speaker is active to prevent echo feedback.
     // Flush DMA buffers on unmute so captured speaker audio is discarded.
@@ -110,13 +114,7 @@ void onWsConnection(bool connected) {
 void onWsText(const char* type, const char* data) {
     Serial.printf("[WS Recv] type=%s data=%s\n", type, data);
 
-    if (strcmp(type, "status") == 0) {
-        if (strcmp(data, "thinking") == 0) {
-            // Server-side override; it may not always be needed
-        } else if (strcmp(data, "speaking") == 0) {
-            setState(STATE_SPEAKING);
-        }
-    } else if (strcmp(type, "thinking") == 0) {
+    if (strcmp(type, "thinking") == 0) {
         setState(STATE_THINKING);
     } else if (strcmp(type, "speaking") == 0) {
         setState(STATE_SPEAKING);
@@ -420,12 +418,15 @@ void loop() {
             break;
 
         case STATE_THINKING:
-            // Timeout after 30 seconds — non-blocking: show message then wait 1.5s before reset
+            // Timeout after 30 seconds — non-blocking: show message then wait 1.5s before reset.
+            // Uses a boolean flag rather than a 0-sentinel so that millis() wrapping to 0
+            // at 49 days cannot falsely reset the timer.
             if (millis() - stateEnteredAt > 30000) {
-                if (thinkingTimeoutAt == 0) {
+                if (!thinkingTimedOut) {
                     Serial.println("[Main] Thinking timeout!");
                     display.showMessage("Timeout", "Try again");
                     thinkingTimeoutAt = millis();
+                    thinkingTimedOut = true;
                 } else if (millis() - thinkingTimeoutAt > 1500) {
                     setState(STATE_IDLE);
                 }
