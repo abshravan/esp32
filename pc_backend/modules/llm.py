@@ -51,12 +51,19 @@ class LLMChat:
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read())
-            reply = data["message"]["content"].strip()
-        except Exception as e:
-            print(f"[LLM] Error: {e}")
+        reply = None
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read())
+                reply = data["message"]["content"].strip()
+                break
+            except Exception as e:
+                print(f"[LLM] Error (attempt {attempt}/{max_retries}): {e}")
+                if attempt < max_retries:
+                    time.sleep(1)
+        if reply is None:
             return "Sorry, I had trouble thinking about that. Could you try again?"
 
         elapsed = time.time() - start

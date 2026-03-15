@@ -68,14 +68,17 @@ private:
                 break;
 
             case WStype_CONNECTED:
-                Serial.printf("[WS] Connected to %s\n", (char*)payload);
+                // Use length-bounded print — payload is not guaranteed null-terminated.
+                Serial.printf("[WS] Connected to %.*s\n", (int)length, (char*)payload);
                 connected = true;
                 if (connCb) connCb(true);
                 break;
 
             case WStype_TEXT: {
-                // Parse JSON text messages
-                StaticJsonDocument<512> doc;
+                // Parse JSON text messages.
+                // 1024 bytes gives ~980 chars of usable text — enough for a 60 s transcript
+                // at typical Whisper output density without hitting heap pressure.
+                StaticJsonDocument<1024> doc;
                 DeserializationError err = deserializeJson(doc, payload, length);
                 if (err) {
                     Serial.printf("[WS] JSON parse error: %s\n", err.c_str());

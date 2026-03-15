@@ -3,7 +3,6 @@ Central configuration for the voice assistant backend.
 Loads from environment variables or .env file.
 """
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -47,6 +46,3 @@ MAX_CONVERSATION_TURNS = int(os.getenv("MAX_CONVERSATION_TURNS", "10"))
 # 1024 bytes = 512 samples = 32ms at 16kHz
 AUDIO_STREAM_CHUNK = 1024
 
-# ─── Paths ────────────────────────────────────────────
-AUDIO_CACHE_DIR = Path(__file__).parent / "audio_cache"
-AUDIO_CACHE_DIR.mkdir(exist_ok=True)

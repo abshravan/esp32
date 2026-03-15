@@ -31,7 +31,11 @@ class TextToSpeech:
         print(f"[TTS] Synthesizing: \"{text[:80]}{'...' if len(text)>80 else ''}\"")
         start = time.time()
 
-        tmp_path = tempfile.mktemp(suffix=".wav")
+        # mkstemp creates the file atomically (no TOCTOU race between
+        # generating the path and pyttsx3 opening it).  Close the fd
+        # immediately — pyttsx3 will reopen the file by path itself.
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        os.close(tmp_fd)
         try:
             self._engine.save_to_file(text, tmp_path)
             self._engine.runAndWait()
@@ -40,6 +44,13 @@ class TextToSpeech:
                 raw = wf.readframes(wf.getnframes())
                 src_rate = wf.getframerate()
                 n_channels = wf.getnchannels()
+                src_width = wf.getsampwidth()
+
+            if src_width != 2:
+                raise ValueError(
+                    f"pyttsx3 produced {src_width * 8}-bit audio; expected 16-bit. "
+                    "Check your OS TTS engine settings."
+                )
 
             # Mix stereo → mono if needed
             if n_channels == 2:

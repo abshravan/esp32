@@ -147,8 +147,11 @@ class VoiceSession:
         tts_elapsed = time.time() - tts_start
         print(f"[Pipeline] TTS streaming took {tts_elapsed:.2f}s ({chunks_sent} chunks)")
 
-        # Signal end of audio
-        await self.send_json("audio_end")
+        # Signal end of audio — skip if cancelled; ESP32 already returned to IDLE via
+        # its own cancelAction() and sending a stale audio_end would set audioEndReceived
+        # while the device is idle, confusing the next SPEAKING→IDLE transition.
+        if not self.is_cancelled:
+            await self.send_json("audio_end")
 
         total = time.time() - pipeline_start
         print(f"\n[Pipeline] ✓ Total round-trip: {total:.2f}s\n")
