@@ -42,6 +42,11 @@ class LLMChat:
             "model": config.OLLAMA_MODEL,
             "messages": self._build_messages(user_text),
             "stream": False,
+            "options": {
+                # Hard token cap — prevents long TTS responses that overflow
+                # the ESP32 playback buffer or take too long to speak aloud.
+                "num_predict": config.MAX_RESPONSE_TOKENS,
+            },
         }).encode()
 
         req = urllib.request.Request(

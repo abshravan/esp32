@@ -30,12 +30,18 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", """
-You are a helpful, friendly voice assistant running on an ESP32 device.
-Keep your responses concise and conversational — ideally 1-3 sentences.
-The user is speaking to you, so respond naturally as in a spoken conversation.
-Do not use markdown, bullet points, or formatting — just plain spoken text.
-If you don't know something, say so briefly.
+You are a concise voice assistant on an ESP32 device.
+STRICT RULES — follow every rule on every response:
+- Answer in 1-2 short sentences MAXIMUM. Never more.
+- No lists, no markdown, no bullet points, no headers.
+- No lengthy explanations or background. Get to the point immediately.
+- If asked about a broad topic, give ONE key fact and offer to elaborate.
+- Plain spoken English only, as if talking to someone face-to-face.
 """.strip())
+
+# Hard cap on LLM output tokens — keeps TTS audio under ~5 seconds.
+# 80 tokens ≈ 60 words ≈ 2 short sentences at typical speaking pace.
+MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "80"))
 
 # ─── Conversation Memory ─────────────────────────────
 # Number of previous turns to keep in context
