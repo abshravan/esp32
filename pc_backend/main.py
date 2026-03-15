@@ -160,9 +160,10 @@ class VoiceSession:
             chunks_sent += 1
             offset = end
 
-            # Yield every 10 chunks so the event loop can process incoming frames
-            if chunks_sent % 10 == 0:
-                await asyncio.sleep(0)
+            # Yield every chunk so the event loop can process cancel messages
+            # immediately.  asyncio.sleep(0) is cheap (~µs) and ensures the
+            # receive loop runs between each send_bytes() call.
+            await asyncio.sleep(0)
 
         tts_elapsed = time.time() - tts_start
         print(f"[Pipeline] TTS streaming took {tts_elapsed:.2f}s ({chunks_sent} chunks)")
