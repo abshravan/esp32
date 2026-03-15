@@ -30,6 +30,12 @@ Display display;
 
 AssistantState currentState = STATE_IDLE;
 bool buttonPressed = false;
+
+// Guard flag for onWsBinary().  Set to true only when actively in
+// STATE_SPEAKING; cleared to false BEFORE audio.stopSpeaker() so that any
+// concurrent WebSocket background task sees the rejection immediately —
+// even if the state variable hasn't been updated yet.
+volatile bool acceptPlaybackAudio = false;
 unsigned long lastButtonCheck = 0;
 unsigned long stateEnteredAt = 0;
 bool audioEndReceived = false;
@@ -66,6 +72,7 @@ void setState(AssistantState newState) {
     // Mute mic while speaker is active to prevent echo feedback.
     // Flush DMA buffers on unmute so captured speaker audio is discarded.
     if (newState == STATE_SPEAKING) {
+        acceptPlaybackAudio = true;
         audio.muteMicrophone();
         playbackEndedAt = 0;  // Reset cooldown timer for this new playback session.
     } else if (newState == STATE_LISTENING) {
@@ -137,10 +144,12 @@ void onWsText(const char* type, const char* data) {
 
 void onWsBinary(const uint8_t* data, size_t len) {
     // Audio data from server → ring buffer → speaker.
-    // Discard if not speaking: the server may still be streaming chunks after
-    // we interrupted playback (cancel races the pipeline).  Accepting them
-    // would fill the ring buffer with no reader to drain it, causing overflow.
-    if (currentState != STATE_SPEAKING) return;
+    // Use acceptPlaybackAudio (not currentState) because the WebSocket library
+    // may call this from a background task — checking a volatile bool is safe
+    // across tasks; reading the shared currentState variable is not.
+    // The flag is cleared *before* stopSpeaker() in startListening/cancelAction
+    // so even in-flight callbacks are rejected before the buffer is cleared.
+    if (!acceptPlaybackAudio) return;
 
     size_t written = audio.playbackBuffer.write(data, len);
     if (written < len) {
@@ -234,6 +243,7 @@ void handlePlayback() {
     if (audioEndReceived && audio.playbackBuffer.available() < AUDIO_CHUNK_BYTES) {
         if (playbackEndedAt == 0) {
             Serial.println("[Main] Audio stream done, muting mic for echo cooldown...");
+            acceptPlaybackAudio = false;
             audio.stopSpeaker();
             playbackEndedAt = millis();
         } else if (millis() - playbackEndedAt > POST_SPEAK_SILENCE_MS) {
@@ -290,6 +300,7 @@ void setup() {
     Serial.println("║  s + Enter  →  Start listening (record)  ║");
     Serial.println("║  e + Enter  →  Stop listening (process)  ║");
     Serial.println("║  c + Enter  →  Cancel / interrupt         ║");
+    Serial.println("║  r + Enter  →  Reset ESP32               ║");
     Serial.println("║  BOOT btn   →  Tap=start, tap again=send ║");
     Serial.println("╚══════════════════════════════════════════╝");
     Serial.println();
@@ -300,7 +311,9 @@ void setup() {
 // ============================================================
 void startListening() {
     if (currentState == STATE_SPEAKING) {
-        // Interrupt current playback
+        // Stop accepting audio FIRST so onWsBinary rejects any concurrent
+        // callbacks before we clear the buffer.
+        acceptPlaybackAudio = false;
         audio.stopSpeaker();
         wsClient.sendControl("cancel");
     }
@@ -319,6 +332,7 @@ void stopListening() {
 
 void cancelAction() {
     if (currentState == STATE_SPEAKING) {
+        acceptPlaybackAudio = false;
         audio.stopSpeaker();
         wsClient.sendControl("cancel");
         Serial.println("[Cancel] Playback interrupted");
@@ -371,11 +385,18 @@ void handleSerial() {
                 cancelAction();
                 break;
 
+            case 'r':
+            case 'R':
+                Serial.println("[Serial] >>> RESTARTING...");
+                delay(100);  // Flush serial buffer before reset
+                ESP.restart();
+                break;
+
             case 'h':
             case 'H':
             case '?':
                 Serial.println();
-                Serial.println("Commands: s=start, e=end, c=cancel, h=help");
+                Serial.println("Commands: s=start, e=end, c=cancel, r=reset, h=help");
                 Serial.printf("State: %d | WS: %s | Buf: %d bytes\n",
                     currentState,
                     wsClient.isConnected() ? "connected" : "disconnected",
