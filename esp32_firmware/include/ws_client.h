@@ -68,7 +68,8 @@ private:
                 break;
 
             case WStype_CONNECTED:
-                Serial.printf("[WS] Connected to %s\n", (char*)payload);
+                // Use length-bounded print — payload is not guaranteed null-terminated.
+                Serial.printf("[WS] Connected to %.*s\n", (int)length, (char*)payload);
                 connected = true;
                 if (connCb) connCb(true);
                 break;

@@ -34,6 +34,7 @@ unsigned long lastButtonCheck = 0;
 unsigned long stateEnteredAt = 0;
 bool audioEndReceived = false;
 unsigned long thinkingTimeoutAt = 0;  // When the timeout message was first shown
+unsigned long playbackEndedAt = 0;    // For post-speak echo cooldown (reset each session)
 
 // Mic capture buffer (reused each loop iteration)
 uint8_t micBuffer[AUDIO_CHUNK_BYTES];
@@ -58,6 +59,7 @@ void setState(AssistantState newState) {
     // Flush DMA buffers on unmute so captured speaker audio is discarded.
     if (newState == STATE_SPEAKING) {
         audio.muteMicrophone();
+        playbackEndedAt = 0;  // Reset cooldown timer for this new playback session.
     } else if (newState == STATE_LISTENING) {
         audio.unmuteMicrophone();
     }
@@ -224,8 +226,6 @@ void handlePlayback() {
     // keep the mic muted for POST_SPEAK_SILENCE_MS so room echo dies down
     // before we return to IDLE and allow the next recording to start.
     if (audioEndReceived && audio.playbackBuffer.available() < AUDIO_CHUNK_BYTES) {
-        static unsigned long playbackEndedAt = 0;
-
         if (playbackEndedAt == 0) {
             Serial.println("[Main] Audio stream done, muting mic for echo cooldown...");
             audio.stopSpeaker();

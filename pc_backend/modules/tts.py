@@ -31,7 +31,11 @@ class TextToSpeech:
         print(f"[TTS] Synthesizing: \"{text[:80]}{'...' if len(text)>80 else ''}\"")
         start = time.time()
 
-        tmp_path = tempfile.mktemp(suffix=".wav")
+        # mkstemp creates the file atomically (no TOCTOU race between
+        # generating the path and pyttsx3 opening it).  Close the fd
+        # immediately — pyttsx3 will reopen the file by path itself.
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        os.close(tmp_fd)
         try:
             self._engine.save_to_file(text, tmp_path)
             self._engine.runAndWait()

@@ -182,6 +182,10 @@ public:
         if (got > 0) {
             size_t written = 0;
             i2s_write(SPK_I2S_PORT, chunk, got, &written, pdMS_TO_TICKS(50));
+            if (written < got) {
+                Serial.printf("[Audio] Speaker underwrite: %u of %u bytes written\n",
+                              (unsigned)written, (unsigned)got);
+            }
         }
     }
 
